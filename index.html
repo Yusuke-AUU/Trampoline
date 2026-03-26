@@ -3,77 +3,62 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>TRAMPOLINE — 競技トランポリンゲーム</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
+<title>TRAMPOLINE</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<canvas id="gameCanvas"></canvas>
+<canvas id="c"></canvas>
 
-<!-- HUD -->
 <div id="hud">
   <div id="hud-left">
-    <div class="hud-label">HEIGHT</div>
-    <div id="height-val" class="hud-value">0.0<span class="hud-unit">m</span></div>
+    <div class="lbl">SKILL</div>
+    <div id="skill-no" class="val">1<span class="unit">/10</span></div>
   </div>
   <div id="hud-center">
-    <div id="skill-dots"></div>
-    <div id="phase-text">TAP TO START</div>
+    <div id="dots"></div>
+    <div id="phase-txt">—</div>
   </div>
   <div id="hud-right">
-    <div class="hud-label">SCORE</div>
-    <div id="score-val" class="hud-value">0.0</div>
+    <div class="lbl">SCORE</div>
+    <div id="score-val" class="val">0.0</div>
   </div>
 </div>
 
-<!-- Command input display -->
-<div id="cmd-panel">
-  <div id="cmd-label">NEXT SKILL</div>
-  <div id="cmd-display">—</div>
+<div id="cmd-wrap">
+  <div id="cmd-dir"></div>
+  <div id="cmd-seq"></div>
   <div id="cmd-hint"></div>
 </div>
 
-<!-- Tap timing flash -->
+<div id="msg"></div>
+
 <div id="tap-ring"></div>
 
-<!-- Message overlay -->
-<div id="msg-overlay">
-  <div id="msg-text"></div>
+<!-- フラッシュラベル用 -->
+
+<!-- タイトル -->
+<div id="title">
+  <div id="t-logo">TRAMPOLINE</div>
+  <div id="t-sub">競技トランポリン</div>
+  <div id="t-rules">
+    <div class="r-row"><b>姿勢</b> 〇＝抱え込み　＜＝屈伸　／＝伸身</div>
+    <div class="r-row"><b>宙返り</b> タップ回数（最大3回）</div>
+    <div class="r-row"><b>捻り</b> タップ直後に 〇＝1回 ／＝0.5回</div>
+    <div class="r-sep"></div>
+    <div class="r-row ex">例: ＜・〇・・／ = 屈伸3宙2.5捻（前方）</div>
+    <div class="r-row ex">例: 〇・・〇・〇 = 抱え込み3宙2捻（後方）</div>
+  </div>
+  <button id="start-btn">START</button>
 </div>
 
-<!-- Title screen -->
-<div id="title-screen">
-  <div id="title-logo">
-    <div id="title-main">TRAMPOLINE</div>
-    <div id="title-sub">競技トランポリン</div>
-  </div>
-  <div id="title-instructions">
-    <div class="inst-row"><span class="inst-icon">●</span> ベッドの底でタップ → 高さアップ</div>
-    <div class="inst-row"><span class="inst-icon">○</span> 円スワイプ → 抱え込み / 捻り×1</div>
-    <div class="inst-row"><span class="inst-icon">&lt;</span> V字スワイプ → 屈伸姿勢</div>
-    <div class="inst-row"><span class="inst-icon">/</span> 斜めスワイプ → 伸身 / 捻り×0.5</div>
-    <div class="inst-row"><span class="inst-icon">N×</span> タップN回 → 宙返りN回</div>
-  </div>
-  <div id="title-example">
-    例: ○ → タップ×2 → ○ → ○/ = 抱え込み3宙2.5捻り
-  </div>
-  <button id="start-btn">START GAME</button>
-</div>
-
-<!-- Result screen -->
-<div id="result-screen" class="hidden">
-  <div id="result-title">FINAL SCORE</div>
-  <div id="result-scores">
-    <div class="score-row"><span>難度点 D-score</span><span id="res-diff">0.0</span></div>
-    <div class="score-row"><span>高さボーナス</span><span id="res-height">0.0</span></div>
-    <div class="score-row"><span>タイミング</span><span id="res-timing">0.0</span></div>
-    <div class="score-divider"></div>
-    <div class="score-row total"><span>TOTAL</span><span id="res-total">0.0</span></div>
-  </div>
-  <div id="result-skills">
-    <div class="skill-list-title">演技内容</div>
-    <div id="skill-list"></div>
+<!-- リザルト -->
+<div id="result" class="hidden">
+  <div id="r-title">RESULT</div>
+  <div id="r-rows"></div>
+  <div id="r-sep"></div>
+  <div id="r-total-row">
+    <span>TOTAL</span><span id="r-total">0.00</span>
   </div>
   <button id="retry-btn">もう一度</button>
 </div>

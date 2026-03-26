@@ -1,489 +1,516 @@
 'use strict';
+// ═══════════════════════════════════════════════
+//  TRAMPOLINE GAME  v3
+//  - Starts already jumping (no warmup)
+//  - Fixed height, auto-maintained
+//  - Portrait phone layout
+//  - Side-view athlete
+//  - Command: posture → (tap + twist swipe) per somersault group
+// ═══════════════════════════════════════════════
 
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-let W = 0, H = 0;
-function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
-resize();
-window.addEventListener('resize', resize);
+const C  = document.getElementById('c');
+const cx = C.getContext('2d');
+let W, H;
+function resize(){ W=C.width=window.innerWidth; H=C.height=window.innerHeight; }
+resize(); window.addEventListener('resize', resize);
 
-const GRAVITY     = 1400;
-const BED_Y_RATIO = 0.72;
-const MAX_ENERGY  = 1300;
-const BOTTOM_WIN  = 0.32;
-const WARMUP_NEED = 3;
-const SKILL_COUNT = 10;
+// ── Constants ─────────────────────────────────
+const JUMP_HEIGHT  = 0.52;   // fraction of screen height (top of arc)
+const JUMP_PERIOD  = 1.8;    // seconds per full jump cycle
+const BED_Y_FRAC   = 0.78;   // bed position from top
+const SKILL_COUNT  = 10;
+const DIFF_BASE    = {1:0.5, 2:1.2, 3:2.0};
+const DIFF_POS     = {tuck:0, pike:0.1, layout:0.2};
 
-const DIFF_BASE = { 1:0.5, 2:1.2, 3:2.0 };
-const DIFF_POS  = { tuck:0, pike:0.1, layout:0.2 };
+// ── Phase ─────────────────────────────────────
+const P = {TITLE:'T', PLAY:'P', RESULT:'R'};
 
-const Phase = { TITLE:'TITLE', WARMUP:'WARMUP', SKILL_INPUT:'SKILL_INPUT',
-                PERFORMING:'PERFORMING', STRAIGHT:'STRAIGHT', LANDING:'LANDING', RESULT:'RESULT' };
-
-let G = {};
-
-function mkState() {
-  return {
-    phase: Phase.WARMUP,
-    py: 0, vy: 0, onBed: true, wasOnBed: true,
-    bedSag: 0, bedSagV: 0,
-    atBottom: false, bottomTimer: 0, bedFlash: 0,
-    energy: 140,
-    warmupCount: 0,
-    skillIdx: 0, doneSkills: [],
-    pending: null,
-    buf: [], bufTimeout: null, inputLocked: false,
-    tapAccum: 0, tapFlushTimer: null,
-    sDiff: 0, sHeight: 0, sTiming: 0,
-    peakThisJump: 0,
-    angle: 0, spinRate: 0, twistAng: 0, twistRate: 0,
-    performing: false, perfTimer: 0, perfDur: 1.7,
-    particles: [], jumpFlash: 0, landFlash: 0,
-    trail: [],
+// ── State ─────────────────────────────────────
+let G;
+function newGame(){
+  G={
+    phase: P.PLAY,
+    t: 0,              // time in current jump cycle (0..JUMP_PERIOD)
+    skillIdx: 0,
+    done: [],          // completed skills
+    // command input
+    buf: [],           // [{type:'posture'|'tap'|'twist', val}]
+    step: 'posture',   // 'posture' | 'body' (tap+twist pairs)
+    tapInBuf: 0,       // taps accumulated since last flush
+    twistInBuf: 0,     // twists accumulated for current tap group
+    locked: false,     // skill confirmed
+    pending: null,     // confirmed skill object
+    // score
+    sDiff:0, sH:0, sTiming:0,
+    // animation
+    spinAngle:0, spinRate:0, spinTimer:0, spinning:false,
+    // input gesture
+    ptStart:null, pts:[],
+    tapAccum:0, tapFlushTid:null,
   };
-}
-
-function startNewGame() {
-  G = mkState();
   updateDots();
-  setCmdDisplay('—');
-  setPhase('予備ジャンプ — ベッドの底でタップ!');
-  document.getElementById('result-screen').classList.add('hidden');
+  setCmdSeq('—');
+  setCmdDir('');
+  setCmdHint('姿勢を入力: ○ ＜ ／');
+  setPhase('技 1 / 10（前方）');
+  document.getElementById('result').classList.add('hidden');
 }
 
-/* ── Skill helpers ── */
-function isFwd(i) { return i%2===0; }
-function calcDiff(s) {
-  return Math.round(((DIFF_BASE[s.somersaults]||0) + s.twists*0.1*2 + DIFF_POS[s.position]*s.somersaults)*10)/10;
-}
-function skillLabel(s,fwd) {
-  const d={tuck:'抱え込み',pike:'屈伸',layout:'伸身'}[s.position];
-  const tw=s.twists>0?`${s.twists}捻り`:'';
-  return `${fwd?'前方':'後方'} ${d}${s.somersaults}回宙${tw}`;
+// ── Skill helpers ──────────────────────────────
+const isFwd = i => i%2===0;
+
+function calcDiff(s){
+  return Math.round(((DIFF_BASE[s.som]||0)+s.tw*0.1*2+DIFF_POS[s.pos]*s.som)*10)/10;
 }
 
-/* ── Command parsing ── */
-function parseCmd(buf) {
-  if (!buf.length) return null;
-  let idx=0, position='tuck', somersaults=0, twists=0;
-  if      (buf[0]==='circle') { position='tuck';   idx=1; }
-  else if (buf[0]==='vee')    { position='pike';   idx=1; }
-  else if (buf[0]==='slash')  { position='layout'; idx=1; }
-  while (idx<buf.length) {
-    const e=buf[idx++];
-    if(e==='tap1') somersaults+=1;
-    else if(e==='tap2') somersaults+=2;
-    else if(e==='tap3') somersaults+=3;
-    else if(e==='circle') twists+=1;
-    else if(e==='slash')  twists+=0.5;
+function skillName(s, fwd){
+  const pn={tuck:'抱え込み',pike:'屈伸',layout:'伸身'}[s.pos];
+  const tn=s.tw>0?`${s.tw}捻り`:'';
+  return `${fwd?'前方':'後方'} ${pn}${s.som}回宙${tn}`;
+}
+
+// ── Command buffer ─────────────────────────────
+// Buffer structure: array of tokens
+// 'posture:tuck' | 'posture:pike' | 'posture:layout'
+// 'tap:N'   (N reps of this tap group)
+// 'tw:N'    (twist for preceding tap group, in 0.5 units)
+
+function resetCmd(){
+  G.buf=[]; G.step='posture'; G.tapAccum=0; G.twistInBuf=0;
+  G.locked=false; G.pending=null;
+  setCmdSeq('—'); setCmdDir(''); setCmdHint('姿勢を入力: ○ ＜ ／');
+}
+
+function buildDisplayStr(){
+  let s='';
+  for(const t of G.buf){
+    if(t.startsWith('pos:')) s+={tuck:'○',pike:'＜',layout:'／'}[t.slice(4)];
+    else if(t.startsWith('tap:')) s+='·'.repeat(parseInt(t.slice(4)));
+    else if(t.startsWith('tw:')) {
+      const v=parseFloat(t.slice(3));
+      const n=Math.round(v/0.5);
+      s+='〇'.repeat(Math.floor(n/2))+( n%2?'/':'' );
+    }
   }
-  somersaults=Math.max(1,Math.min(3,somersaults));
-  twists=Math.round(twists*2)/2;
+  return s||'—';
+}
+
+function parseSkill(){
+  // Extract posture
+  const posT=G.buf.find(t=>t.startsWith('pos:'));
+  if(!posT) return null;
+  const pos=posT.slice(4);
+  // Extract tap+twist pairs
+  let som=0, tw=0;
+  for(let i=0;i<G.buf.length;i++){
+    const t=G.buf[i];
+    if(t.startsWith('tap:')){
+      const n=parseInt(t.slice(4));
+      som+=n;
+      // look ahead for twist
+      if(i+1<G.buf.length && G.buf[i+1].startsWith('tw:')){
+        tw+=parseFloat(G.buf[i+1].slice(3));
+        i++;
+      }
+    }
+  }
+  som=Math.max(1,Math.min(3,som));
+  tw=Math.round(tw*2)/2;
+  // Enforce direction rules
   const fwd=isFwd(G.skillIdx);
-  if (fwd) {
-    if (twists===0||twists%1===0) twists=Math.max(0.5,twists+0.5);
-    twists=Math.min(twists,3.5);
+  if(fwd){
+    if(tw===0||tw%1===0) tw=Math.max(0.5,tw+0.5);
+    tw=Math.min(tw,3.5);
   } else {
-    twists=Math.max(1,Math.min(3,Math.round(twists)));
+    tw=Math.max(1,Math.min(3,Math.round(tw)));
   }
-  return { somersaults, twists, position };
+  return {pos, som, tw};
 }
 
-function commitCmd() {
-  clearTimeout(G.bufTimeout);
-  const skill=parseCmd(G.buf);
-  if (!skill) { resetCmd(); return; }
-  G.pending=skill; G.inputLocked=true;
+function commitCmd(){
+  const s=parseSkill();
+  if(!s||s.som<1){resetCmd();return;}
+  G.pending=s; G.locked=true;
   const fwd=isFwd(G.skillIdx);
-  const posIco={tuck:'○',pike:'<',layout:'/'}[skill.position];
-  setCmdDisplay(`${posIco} ${skill.somersaults}宙 ${skill.twists}捻`);
-  setCmdHint('✓ 確定 — 次の着地で発動');
-  showMsg(skillLabel(skill,fwd), 1.4);
-}
-function resetCmd() {
-  clearTimeout(G.bufTimeout); G.buf=[]; G.pending=null; G.inputLocked=false;
-  setCmdDisplay('—'); setCmdHint('');
-}
-function pushCmd(entry) {
-  if (G.inputLocked) return;
-  G.buf.push(entry);
-  const s=parseCmd(G.buf);
-  if (s) { const p={tuck:'○',pike:'<',layout:'/'}[s.position]; setCmdDisplay(`${p} ${s.somersaults}宙 ${s.twists}捻`); }
-  clearTimeout(G.bufTimeout);
-  G.bufTimeout=setTimeout(commitCmd, 1300);
+  setCmdSeq(buildDisplayStr());
+  setCmdDir(fwd?'前方':'後方');
+  setCmdHint('✓ 確定 — 着地で発動');
+  showMsg(skillName(s,fwd),1.4);
 }
 
-/* ── UI ── */
-function setPhase(t)    { document.getElementById('phase-text').textContent=t; }
-function setCmdHint(t)  { document.getElementById('cmd-hint').textContent=t; }
-function setCmdDisplay(t){ document.getElementById('cmd-display').textContent=t; }
-function updateHUD() {
-  const hm=Math.max(0,G.peakThisJump/40).toFixed(1);
-  document.getElementById('height-val').innerHTML=`${hm}<span class="hud-unit">m</span>`;
-  document.getElementById('score-val').textContent=(G.sDiff+G.sHeight+G.sTiming).toFixed(2);
+// tap input (airborne)
+function onAirTap(x,y){
+  if(G.locked) return;
+  if(G.step==='posture'){
+    // no posture yet => ignore
+    return;
+  }
+  // flush previous tap group if pending twist was expected
+  G.tapAccum++;
+  flashLbl(`×${G.tapAccum}`,x,y-28,'#ffd700');
+  clearTimeout(G.tapFlushTid);
+  G.tapFlushTid=setTimeout(()=>{
+    const n=Math.min(3,G.tapAccum);
+    G.tapAccum=0;
+    G.buf.push(`tap:${n}`);
+    setCmdSeq(buildDisplayStr());
+    // wait for twist or next tap
+    setCmdHint('捻り: 〇 or ／ (なければ次の宙返りをタップ)');
+  },360);
 }
-function updateDots() {
-  const c=document.getElementById('skill-dots'); c.innerHTML='';
+
+// gesture input
+function onGesture(type,x,y){
+  if(G.locked) return;
+  const icons={circle:'〇',slash:'／',vee:'＜'};
+  flashLbl(icons[type]||type,x,y-28,'#00e5ff');
+
+  if(G.step==='posture'){
+    const posMap={circle:'tuck',vee:'pike',slash:'layout'};
+    const pos=posMap[type];
+    if(!pos) return;
+    G.buf.push(`pos:${pos}`);
+    G.step='body';
+    const posName={tuck:'○ 抱え込み',pike:'＜ 屈伸',layout:'／ 伸身'}[pos];
+    setCmdSeq(buildDisplayStr());
+    setCmdHint('宙返り: タップ回数で入力');
+    setCmdDir(isFwd(G.skillIdx)?'前方':'後方');
+    return;
+  }
+
+  // In body phase: gesture = twist for last tap group
+  if(G.step==='body'){
+    // Flush pending taps first if tapAccum>0
+    if(G.tapAccum>0){
+      clearTimeout(G.tapFlushTid);
+      G.buf.push(`tap:${Math.min(3,G.tapAccum)}`);
+      G.tapAccum=0;
+    }
+    // Must have a tap token to attach twist to
+    const lastTap=G.buf.slice().reverse().find(t=>t.startsWith('tap:'));
+    if(!lastTap) return;
+    // Check if last buf entry is already a twist => replace
+    if(G.buf[G.buf.length-1].startsWith('tw:')){
+      const cur=parseFloat(G.buf[G.buf.length-1].slice(3));
+      G.buf[G.buf.length-1]=`tw:${cur+(type==='circle'?1:0.5)}`;
+    } else {
+      G.buf.push(`tw:${type==='circle'?1:0.5}`);
+    }
+    setCmdSeq(buildDisplayStr());
+    setCmdHint('続け: タップ or 長押しで確定');
+    clearTimeout(G.tapFlushTid);
+    G.tapFlushTid=setTimeout(commitCmd,1200);
+  }
+}
+
+// ── Update ────────────────────────────────────
+function update(dt){
+  if(G.phase!==P.PLAY) return;
+
+  G.t+=dt;
+  if(G.t>=JUMP_PERIOD){
+    G.t-=JUMP_PERIOD;
+    onCycleLand(); // bottom of jump cycle
+  }
+
+  // Spin
+  if(G.spinning){
+    G.spinTimer-=dt;
+    G.spinAngle+=G.spinRate*dt;
+    if(G.spinTimer<=0){G.spinning=false;G.spinRate=0;}
+  }
+}
+
+function onCycleLand(){
+  // Execute pending skill on landing
+  if(G.pending && G.locked){
+    execSkill();
+  }
+}
+
+function execSkill(){
+  const s=G.pending, fwd=isFwd(G.skillIdx);
+  const d=calcDiff(s);
+  G.sDiff=Math.round((G.sDiff+d)*10)/10;
+  G.sH   =Math.round((G.sH+0.5)*10)/10;
+
+  // Spin animation
+  G.spinRate =s.som*360/JUMP_PERIOD;
+  G.twistRate=s.tw *360/JUMP_PERIOD;
+  G.spinTimer=JUMP_PERIOD*0.7;
+  G.spinning =true;
+  G.spinAngle=0;
+
+  G.done.push({s,fwd,d:Math.round(d*10)/10,name:skillName(s,fwd)});
+  G.pending=null; G.locked=false;
+  G.buf=[]; G.step='posture'; G.tapAccum=0;
+  G.skillIdx++;
+  updateDots();
+
+  if(G.skillIdx>=SKILL_COUNT){
+    // final straight jump → result after one more cycle
+    setPhase('ストレートジャンプ!');
+    setCmdSeq('—'); setCmdHint('着地で終了!'); setCmdDir('');
+    setTimeout(()=>{
+      G.phase=P.RESULT;
+      showResult();
+    }, JUMP_PERIOD*1000+300);
+  } else {
+    const nf=isFwd(G.skillIdx);
+    setPhase(`技 ${G.skillIdx+1} / 10（${nf?'前方':'後方'}）`);
+    setCmdSeq('—'); setCmdDir(nf?'前方':'後方');
+    setCmdHint('姿勢を入力: ○ ＜ ／');
+    G.step='posture';
+  }
+}
+
+// ── Draw ──────────────────────────────────────
+function playerY(){
+  // Sinusoidal arc: 0 at t=0 (bed), peak at t=JUMP_PERIOD/2
+  const frac=G.t/JUMP_PERIOD; // 0..1
+  const sin=Math.sin(frac*Math.PI); // 0->1->0
+  return sin; // 0..1
+}
+
+function draw(){
+  cx.clearRect(0,0,W,H);
+
+  // Background
+  cx.fillStyle='#07090f';
+  cx.fillRect(0,0,W,H);
+
+  // Grid
+  cx.strokeStyle='rgba(0,229,255,0.04)';cx.lineWidth=1;
+  for(let x=0;x<W;x+=50){cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();}
+  for(let y=0;y<H;y+=50){cx.beginPath();cx.moveTo(0,y);cx.lineTo(W,y);cx.stroke();}
+
+  const bedY=H*BED_Y_FRAC;
+  const peakY=H*(BED_Y_FRAC-JUMP_HEIGHT);
+
+  // Height markers
+  cx.setLineDash([3,7]);cx.lineWidth=1;
+  cx.font='10px "Share Tech Mono"';cx.fillStyle='rgba(0,229,255,0.28)';cx.textAlign='left';
+  for(let m=1;m<=6;m++){
+    const ry=bedY-m*(bedY-peakY)/6; if(ry<30) break;
+    cx.strokeStyle=`rgba(0,229,255,${m===6?0.15:0.07})`;
+    cx.beginPath();cx.moveTo(34,ry);cx.lineTo(W-8,ry);cx.stroke();
+    cx.fillText(`${m}m`,6,ry+4);
+  }
+  cx.setLineDash([]);
+
+  drawBed(bedY);
+
+  if(G.phase===P.PLAY){
+    const py=playerY();
+    const px=W*0.5;
+    const screenY=bedY - py*(bedY-peakY);
+    drawAthlete(px, screenY, G.spinAngle, G.spinning);
+  }
+}
+
+function drawBed(by){
+  const bw=W*0.46, bx=(W-bw)/2;
+
+  // Frame
+  cx.fillStyle='#252b3a';
+  cx.fillRect(bx-10,by+6,bw+20,9);
+  cx.fillRect(bx-10,by+6,10,24);
+  cx.fillRect(bx+bw,by+6,10,24);
+
+  // Springs
+  cx.strokeStyle='rgba(180,210,255,0.2)';cx.lineWidth=1.5;
+  for(let i=0;i<8;i++){
+    const sx=bx+(i/7)*bw;
+    cx.beginPath();cx.moveTo(sx,by+6);
+    for(let j=1;j<=4;j++){const t=j/4,ox=j%2?2.5:-2.5;cx.lineTo(sx+ox,by+6+9*t);}
+    cx.stroke();
+  }
+
+  // Bed surface
+  cx.fillStyle='rgba(0,160,255,0.13)';
+  cx.fillRect(bx,by,bw,7);
+  cx.strokeStyle='rgba(0,229,255,0.6)';cx.lineWidth=2;
+  cx.beginPath();cx.moveTo(bx,by);cx.lineTo(bx+bw,by);cx.stroke();
+  // cross lines
+  cx.strokeStyle='rgba(0,229,255,0.1)';cx.lineWidth=1;
+  for(let i=1;i<5;i++){
+    const lx=bx+(i/5)*bw;
+    cx.beginPath();cx.moveTo(lx,by);cx.lineTo(lx,by+6);cx.stroke();
+  }
+}
+
+// Side-view athlete (horizontal orientation)
+function drawAthlete(px, py, angleDeg, tuck){
+  cx.save();
+  cx.translate(px,py);
+  cx.rotate((angleDeg%360)*Math.PI/180);
+
+  const fwd=isFwd(G.skillIdx>0?G.skillIdx-1:0);
+  const col=fwd?'#00e5ff':'#ff6b35';
+  cx.shadowColor=col;cx.shadowBlur=14;
+
+  if(tuck){
+    // Tuck: compact ball, side view
+    cx.fillStyle=col;
+    // body
+    cx.beginPath();cx.ellipse(0,2,13,11,0,0,Math.PI*2);cx.fill();
+    // head (to the right in side view)
+    cx.beginPath();cx.ellipse(14,-2,7,7,0,0,Math.PI*2);cx.fill();
+    // knees bent forward
+    cx.strokeStyle=col;cx.lineWidth=3;cx.lineCap='round';
+    cx.beginPath();cx.moveTo(-6,10);cx.lineTo(-14,18);cx.lineTo(-8,24);cx.stroke();
+    cx.beginPath();cx.moveTo(2,12);cx.lineTo(-2,22);cx.lineTo(5,26);cx.stroke();
+  } else {
+    // Layout: streamlined side-view
+    // Head (right side)
+    cx.fillStyle=col;
+    cx.beginPath();cx.ellipse(22,0,8,8,0,0,Math.PI*2);cx.fill();
+    // Neck
+    cx.fillRect(12,-3,12,6);
+    // Torso (horizontal rectangle, tapered)
+    cx.beginPath();
+    cx.moveTo(11,-6);cx.lineTo(-12,-5);cx.lineTo(-12,5);cx.lineTo(11,6);cx.closePath();cx.fill();
+    // Arms up (left side, reaching)
+    cx.strokeStyle=col;cx.lineWidth=3.5;cx.lineCap='round';
+    cx.beginPath();cx.moveTo(-10,-4);cx.quadraticCurveTo(-20,-2,-26,2);cx.stroke();
+    cx.beginPath();cx.moveTo(-10,4);cx.quadraticCurveTo(-20,2,-24,8);cx.stroke();
+    // Legs (right, extended)
+    cx.strokeStyle=col;cx.lineWidth=4;
+    cx.beginPath();cx.moveTo(-2,-5);cx.lineTo(-16,-6);cx.stroke();
+    cx.beginPath();cx.moveTo(-2,5);cx.lineTo(-16,6);cx.stroke();
+    // Feet pointed
+    cx.lineWidth=3;
+    cx.beginPath();cx.moveTo(-16,-6);cx.lineTo(-22,-8);cx.stroke();
+    cx.beginPath();cx.moveTo(-16,6);cx.lineTo(-22,8);cx.stroke();
+    // Highlight
+    cx.strokeStyle='rgba(255,255,255,0.2)';cx.lineWidth=2;
+    cx.beginPath();cx.moveTo(8,-3);cx.lineTo(-8,-3);cx.stroke();
+  }
+
+  cx.shadowBlur=0;
+  cx.restore();
+}
+
+// ── UI helpers ────────────────────────────────
+function setPhase(t){document.getElementById('phase-txt').textContent=t;}
+function setCmdDir(t){document.getElementById('cmd-dir').textContent=t;}
+function setCmdSeq(t){document.getElementById('cmd-seq').textContent=t;}
+function setCmdHint(t){document.getElementById('cmd-hint').textContent=t;}
+function updateDots(){
+  const c=document.getElementById('dots');c.innerHTML='';
   for(let i=0;i<SKILL_COUNT;i++){
-    const d=document.createElement('div'); d.className='skill-dot';
-    if(i<G.skillIdx) d.classList.add(i%2===0?'done-fwd':'done-bwd');
-    else if(i===G.skillIdx) d.classList.add('active');
+    const d=document.createElement('div');d.className='dot';
+    if(i<G.skillIdx) d.classList.add(i%2===0?'fwd':'bwd');
+    else if(i===G.skillIdx) d.classList.add('cur');
     c.appendChild(d);
   }
+  document.getElementById('skill-no').innerHTML=
+    `${Math.min(G.skillIdx+1,SKILL_COUNT)}<span class="unit">/${SKILL_COUNT}</span>`;
 }
+function updateScore(){
+  document.getElementById('score-val').textContent=(G.sDiff+G.sH+G.sTiming).toFixed(1);
+}
+
 let _mt=null;
 function showMsg(text,dur=1.5){
-  const el=document.getElementById('msg-text');
-  el.textContent=text; el.style.opacity='1';
-  clearTimeout(_mt); _mt=setTimeout(()=>{el.style.opacity='0';},dur*1000);
+  const el=document.getElementById('msg');
+  el.textContent=text;el.style.opacity='1';
+  clearTimeout(_mt);_mt=setTimeout(()=>{el.style.opacity='0';},dur*1000);
 }
-function flashLabel(text,x,y,col='#a0ff6f'){
+function flashLbl(text,x,y,col='#a0ff6f'){
   const d=document.createElement('div');
-  d.className='height-flash'; d.textContent=text;
+  d.className='fl';d.textContent=text;
   d.style.cssText=`left:${x}px;top:${y}px;color:${col}`;
-  document.body.appendChild(d); setTimeout(()=>d.remove(),850);
+  document.body.appendChild(d);setTimeout(()=>d.remove(),800);
 }
 function tapRing(x,y){
   const el=document.getElementById('tap-ring');
-  el.style.left=x+'px'; el.style.top=y+'px';
-  el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+  el.style.left=x+'px';el.style.top=y+'px';
+  el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash');
 }
-function bedBaseY(){ return H*BED_Y_RATIO; }
 
-/* ── Physics ── */
-function update(dt) {
-  if (G.phase===Phase.TITLE||G.phase===Phase.RESULT) return;
-
-  /* Bed spring */
-  const K=200, D=18;
-  G.bedSagV+=(-G.bedSag*K - G.bedSagV*D)*dt;
-  G.bedSag +=G.bedSagV*dt;
-  if (G.bedSag<0) G.bedSag=0;
-
-  /* Detect bottom (sag peaked = velocity just turned positive while sag is high) */
-  const prevBottom=G.atBottom;
-  G.atBottom = G.onBed && G.bedSag>0.18 && G.bedSagV>-5;
-  if (!prevBottom && G.atBottom) { G.bottomTimer=BOTTOM_WIN; G.bedFlash=1.0; }
-  if (G.bottomTimer>0) G.bottomTimer-=dt;
-
-  G.wasOnBed=G.onBed;
-
-  if (G.onBed) {
-    G.py=0; G.vy=0;
-    /* Auto launch when bed springs back hard */
-    if (G.bedSagV<-80 && G.bedSag<0.04) doLaunch();
-  } else {
-    G.vy-=GRAVITY*dt;
-    G.py+=G.vy*dt;
-    if (G.py<=0) { G.py=0; onTouchBed(); }
-    else { G.peakThisJump=Math.max(G.peakThisJump,G.py); }
-  }
-
-  /* Spin */
-  if (G.performing) {
-    G.perfTimer+=dt;
-    G.angle   +=G.spinRate *dt;
-    G.twistAng+=G.twistRate*dt;
-    if (G.perfTimer>=G.perfDur*0.72) { G.performing=false; G.spinRate=G.twistRate=0; }
-  }
-
-  /* Trail */
-  const px=W*0.5, py2=bedBaseY()-G.py;
-  G.trail.push({x:px,y:py2});
-  if (G.trail.length>7) G.trail.shift();
-
-  /* Particles */
-  if (!G.onBed && G.py>30 && Math.random()<0.12) {
-    G.particles.push({x:W*0.5+(Math.random()-.5)*20, y:bedBaseY()-G.py,
-      vx:(Math.random()-.5)*70, vy:-20-Math.random()*50, life:1,
-      col:isFwd(G.skillIdx)?'#00e5ff':'#ff6b35'});
-  }
-  G.particles=G.particles.filter(p=>{
-    p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=90*dt; p.life-=dt*2.2; return p.life>0;
+// ── Result ────────────────────────────────────
+function showResult(){
+  const rows=document.getElementById('r-rows');rows.innerHTML='';
+  G.done.forEach((s,i)=>{
+    const div=document.createElement('div');div.className='r-item';
+    div.innerHTML=`<span class="rn">${i+1}</span><span class="rname">${s.name}</span><span class="rd">D${s.d.toFixed(1)}</span>`;
+    rows.appendChild(div);
   });
-
-  /* Flashes */
-  if(G.bedFlash>0) G.bedFlash-=dt*3;
-  if(G.jumpFlash>0) G.jumpFlash-=dt*4;
-  if(G.landFlash>0) G.landFlash-=dt*3;
-
-  /* Phase transition to landing */
-  if (G.phase===Phase.STRAIGHT && !G.onBed && G.vy<0 && G.py>60) {
-    G.phase=Phase.LANDING;
-    setPhase('着地でタップ!');
-  }
-
-  /* Warmup check */
-  if (G.phase===Phase.WARMUP && G.warmupCount>=WARMUP_NEED) {
-    G.phase=Phase.SKILL_INPUT;
-    setPhase('技1/10 (前方) — 空中で入力!');
-    showMsg('技コマンド入力スタート!',2);
-    setCmdHint('○ < / + タップN回');
-  }
-
-  updateHUD();
+  document.getElementById('r-total').textContent=(G.sDiff+G.sH+G.sTiming).toFixed(2);
+  document.getElementById('result').classList.remove('hidden');
 }
 
-function onTouchBed() {
-  G.onBed=true; G.landFlash=1.0;
-  const impact=Math.abs(G.vy);
-  /* Compress bed */
-  G.bedSagV=impact*0.055;
-  G.bedSag=Math.min(G.bedSag+impact*0.0003, 0.9);
-  G.vy=0;
-  if (G.phase===Phase.LANDING) {
-    G.sTiming=Math.round((G.sTiming+0.5)*10)/10;
-    G.phase=Phase.RESULT;
-    setTimeout(showResult, 700);
-  }
-}
+// ── Input ─────────────────────────────────────
+C.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.touches[0];
+  G.ptStart={x:t.clientX,y:t.clientY,time:Date.now()};
+  G.pts=[{x:t.clientX,y:t.clientY}];
+},{passive:false});
 
-function doLaunch() {
-  G.onBed=false;
-  G.vy=G.energy;
-  G.py=2; G.jumpFlash=1.0; G.peakThisJump=0;
-  if (G.pending && (G.phase===Phase.SKILL_INPUT||G.phase===Phase.PERFORMING)) execSkill();
-}
+C.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  const t=e.touches[0];G.pts.push({x:t.clientX,y:t.clientY});
+},{passive:false});
 
-function execSkill() {
-  const s=G.pending, fwd=isFwd(G.skillIdx), d=calcDiff(s);
-  G.sDiff  =Math.round((G.sDiff+d)*10)/10;
-  G.sHeight=Math.round((G.sHeight+(G.energy/MAX_ENERGY)*1.8)*10)/10;
-  G.doneSkills.push({s,fwd,d:Math.round(d*10)/10,name:skillLabel(s,fwd)});
-  G.spinRate=s.somersaults*360/G.perfDur;
-  G.twistRate=s.twists*360/G.perfDur;
-  G.performing=true; G.perfTimer=0; G.angle=0; G.twistAng=0;
-  G.pending=null; G.buf=[]; G.inputLocked=false;
-  setCmdDisplay('—'); setCmdHint('');
-  G.skillIdx++; updateDots();
-  if (G.skillIdx>=SKILL_COUNT) {
-    G.phase=Phase.STRAIGHT;
-    setPhase('STRAIGHT JUMP — 着地でタップ!');
-    showMsg('最終ジャンプ!',1.5);
-  } else {
-    G.phase=Phase.PERFORMING;
-    setPhase(`技${G.skillIdx+1}/10 (${isFwd(G.skillIdx)?'前方':'後方'}) — 空中で入力`);
-    setCmdHint('空中でコマンド入力!');
-  }
-}
+C.addEventListener('touchend',e=>{
+  e.preventDefault();
+  const t=e.changedTouches[0];
+  handleUp(t.clientX,t.clientY);
+},{passive:false});
 
-/* ── Input ── */
-let _ps={x:0,y:0,t:0}, _pts=[], _tacc=0, _tfl=null;
-canvas.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];_ps={x:t.clientX,y:t.clientY,t:Date.now()};_pts=[{x:t.clientX,y:t.clientY}];},{passive:false});
-canvas.addEventListener('touchmove', e=>{e.preventDefault();const t=e.touches[0];_pts.push({x:t.clientX,y:t.clientY});},{passive:false});
-canvas.addEventListener('touchend',  e=>{e.preventDefault();const t=e.changedTouches[0];handleUp(t.clientX,t.clientY);},{passive:false});
-canvas.addEventListener('mousedown', e=>{_ps={x:e.clientX,y:e.clientY,t:Date.now()};_pts=[{x:e.clientX,y:e.clientY}];});
-canvas.addEventListener('mousemove', e=>{if(e.buttons)_pts.push({x:e.clientX,y:e.clientY});});
-canvas.addEventListener('mouseup',   e=>handleUp(e.clientX,e.clientY));
+C.addEventListener('mousedown',e=>{
+  G.ptStart={x:e.clientX,y:e.clientY,time:Date.now()};
+  G.pts=[{x:e.clientX,y:e.clientY}];
+});
+C.addEventListener('mousemove',e=>{if(e.buttons) G.pts.push({x:e.clientX,y:e.clientY});});
+C.addEventListener('mouseup',e=>handleUp(e.clientX,e.clientY));
 
-function handleUp(x,y) {
-  if (G.phase===Phase.TITLE){startGame();return;}
-  const dx=x-_ps.x, dy=y-_ps.y, dist=Math.hypot(dx,dy), dt=Date.now()-_ps.t;
-  if (dist<22&&dt<420) onTap(x,y);
-  else if (dist>=22)   onGesture(classifyGesture(_pts),x,y);
-}
-
-function onTap(x,y) {
+function handleUp(x,y){
+  if(!G.ptStart) return;
+  if(G.phase===P.TITLE){startGame();return;}
+  const dx=x-G.ptStart.x, dy=y-G.ptStart.y;
+  const dist=Math.hypot(dx,dy), dt=Date.now()-G.ptStart.time;
   tapRing(x,y);
-  if (G.phase===Phase.WARMUP) {
-    if (G.onBed && G.atBottom && G.bottomTimer>0) {
-      G.energy=Math.min(G.energy+55,MAX_ENERGY);
-      G.warmupCount++; G.bedFlash=1.0;
-      flashLabel('+HEIGHT',x,y-30,'#a0ff6f');
-      setPhase(`予備ジャンプ ${G.warmupCount}/${WARMUP_NEED}...`);
-    }
-    return;
-  }
-  if ((G.phase===Phase.SKILL_INPUT||G.phase===Phase.PERFORMING) && !G.onBed && !G.inputLocked) {
-    _tacc++;
-    flashLabel(`×${_tacc}`,x,y-25,'#ffd700');
-    clearTimeout(_tfl);
-    _tfl=setTimeout(()=>{pushCmd(`tap${Math.min(3,_tacc)}`);_tacc=0;},370);
-    return;
-  }
-  if (G.phase===Phase.LANDING) {
-    const bonus=G.landFlash>0.6?3.0:G.landFlash>0.3?1.5:0.5;
-    G.sTiming=Math.round((G.sTiming+bonus)*10)/10;
-    flashLabel('LANDED!',W/2-40,H*0.45,'#a0ff6f');
-    G.phase=Phase.RESULT; setTimeout(showResult,700);
-  }
+  if(dist<22&&dt<450) onAirTap(x,y);
+  else if(dist>=22)   onGesture(classifyGesture(G.pts),x,y);
+  G.ptStart=null;
 }
 
-function onGesture(type,x,y) {
-  tapRing(x,y);
-  const icons={circle:'○',slash:'/',vee:'<'};
-  flashLabel(icons[type]||type,x,y-25,'#00e5ff');
-  if ((G.phase===Phase.SKILL_INPUT||G.phase===Phase.PERFORMING)&&!G.inputLocked) pushCmd(type);
-}
-
-function classifyGesture(pts) {
-  if (pts.length<2) return 'slash';
+function classifyGesture(pts){
+  if(pts.length<2) return 'slash';
   const s=pts[0],e=pts[pts.length-1];
   const close=Math.hypot(e.x-s.x,e.y-s.y);
-  let len=0; for(let i=1;i<pts.length;i++) len+=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y);
-  if (close<len*0.38&&len>50) return 'circle';
-  if (pts.length>=4){const mid=pts[Math.floor(pts.length/2)];if(mid.y>Math.min(s.y,e.y)+26) return 'vee';}
+  let len=0;for(let i=1;i<pts.length;i++) len+=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y);
+  if(close<len*0.40&&len>45) return 'circle';
+  if(pts.length>=4){
+    const mid=pts[Math.floor(pts.length/2)];
+    if(mid.y>Math.min(s.y,e.y)+24) return 'vee';
+  }
   return 'slash';
 }
 
-document.getElementById('start-btn').addEventListener('click',()=>{document.getElementById('title-screen').classList.add('hidden');G.phase=Phase.WARMUP;});
-document.getElementById('retry-btn').addEventListener('click',()=>startNewGame());
-function startGame(){document.getElementById('title-screen').classList.add('hidden');G.phase=Phase.WARMUP;}
+// ── Buttons ───────────────────────────────────
+document.getElementById('start-btn').addEventListener('click',startGame);
+document.getElementById('retry-btn').addEventListener('click',()=>{newGame();});
 
-/* ── Result ── */
-function showResult() {
-  const list=document.getElementById('skill-list'); list.innerHTML='';
-  G.doneSkills.forEach((s,i)=>{
-    const div=document.createElement('div'); div.className='skill-item';
-    div.innerHTML=`<span class="skill-no">${i+1}</span><span class="skill-name">${s.name}</span><span class="skill-d">D${s.d.toFixed(1)}</span>`;
-    list.appendChild(div);
-  });
-  document.getElementById('res-diff').textContent=G.sDiff.toFixed(1);
-  document.getElementById('res-height').textContent=G.sHeight.toFixed(1);
-  document.getElementById('res-timing').textContent=G.sTiming.toFixed(1);
-  document.getElementById('res-total').textContent=(G.sDiff+G.sHeight+G.sTiming).toFixed(2);
-  document.getElementById('result-screen').classList.remove('hidden');
+function startGame(){
+  document.getElementById('title').style.display='none';
+  newGame();
 }
 
-/* ── Drawing ── */
-function drawBg() {
-  ctx.fillStyle='#080c14'; ctx.fillRect(0,0,W,H);
-  ctx.strokeStyle='rgba(0,229,255,0.04)'; ctx.lineWidth=1;
-  for(let x=0;x<W;x+=55){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
-  for(let y=0;y<H;y+=55){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
-  const by=bedBaseY();
-  ctx.setLineDash([3,7]); ctx.lineWidth=1;
-  for(let m=1;m<=10;m++){
-    const ry=by-m*40; if(ry<10) break;
-    ctx.strokeStyle=`rgba(0,229,255,${m<=5?0.10:0.05})`;
-    ctx.beginPath();ctx.moveTo(40,ry);ctx.lineTo(W-8,ry);ctx.stroke();
-    ctx.fillStyle='rgba(0,229,255,0.3)'; ctx.font='10px "Share Tech Mono"'; ctx.textAlign='left';
-    ctx.fillText(`${m}m`,6,ry+4);
-  }
-  ctx.setLineDash([]);
-}
-
-function drawBed() {
-  const by=bedBaseY(), bw=W*0.68, bx=(W-bw)/2, sag=G.bedSag*32;
-  ctx.fillStyle='#252b3a';
-  ctx.fillRect(bx-14,by+9,bw+28,11); ctx.fillRect(bx-14,by+9,14,32); ctx.fillRect(bx+bw,by+9,14,32);
-  ctx.strokeStyle='rgba(180,210,255,0.2)'; ctx.lineWidth=1.5;
-  for(let i=0;i<10;i++){
-    const sx=bx+(i/9)*bw;
-    ctx.beginPath(); ctx.moveTo(sx,by+9);
-    for(let j=1;j<=5;j++){const t=j/5,ox=j%2===0?3:-3;ctx.lineTo(sx+ox,by+9+11*t);}
-    ctx.stroke();
-  }
-  ctx.beginPath();
-  ctx.moveTo(bx,by); ctx.quadraticCurveTo(bx+bw/2,by+sag,bx+bw,by);
-  ctx.lineTo(bx+bw,by+9); ctx.quadraticCurveTo(bx+bw/2,by+9+sag,bx,by+9); ctx.closePath();
-  ctx.fillStyle=`rgba(0,180,255,${0.10+G.bedFlash*0.28})`; ctx.fill();
-  const gc=G.atBottom&&G.bottomTimer>0?`rgba(160,255,111,${0.7+Math.sin(Date.now()/70)*0.25})`:`rgba(0,229,255,0.55)`;
-  ctx.strokeStyle=gc; ctx.lineWidth=2.5;
-  ctx.beginPath(); ctx.moveTo(bx,by); ctx.quadraticCurveTo(bx+bw/2,by+sag,bx+bw,by); ctx.stroke();
-  ctx.strokeStyle='rgba(0,229,255,0.08)'; ctx.lineWidth=1;
-  for(let r=1;r<4;r++){const t=r/4,y2=by+sag*t;ctx.beginPath();ctx.moveTo(bx,y2);ctx.lineTo(bx+bw,y2);ctx.stroke();}
-  if (G.atBottom&&G.bottomTimer>0) {
-    const a=G.bottomTimer/BOTTOM_WIN;
-    ctx.fillStyle=`rgba(160,255,111,${a*0.9})`; ctx.font=`bold ${13+a*4}px "Share Tech Mono"`;
-    ctx.textAlign='center'; ctx.fillText('▼  TAP NOW  ▼',W/2,by+55); ctx.textAlign='left';
-  }
-}
-
-function drawPlayer() {
-  const px=W*0.5, py=bedBaseY()-G.py;
-  const fwd=isFwd(G.skillIdx>0?G.skillIdx-1:0);
-  const col=fwd?'#00e5ff':'#ff6b35';
-
-  /* Trail */
-  if (!G.onBed && G.py>10) {
-    for(let i=0;i<G.trail.length;i++){
-      const t=G.trail[i], a=(i/G.trail.length)*0.15;
-      ctx.globalAlpha=a;
-      drawAthlete(t.x,t.y,G.angle-(G.trail.length-i)*22,col,false,0.5);
-    }
-    ctx.globalAlpha=1;
-  }
-
-  /* jump flash */
-  if (G.jumpFlash>0){
-    ctx.strokeStyle=`rgba(160,255,111,${G.jumpFlash*0.8})`; ctx.lineWidth=2.5;
-    ctx.beginPath(); ctx.arc(px,py,32+(1-G.jumpFlash)*40,0,Math.PI*2); ctx.stroke();
-  }
-
-  /* particles */
-  for(const p of G.particles){
-    ctx.globalAlpha=p.life*0.6; ctx.fillStyle=p.col;
-    ctx.beginPath(); ctx.arc(p.x,p.y,2.5,0,Math.PI*2); ctx.fill();
-  }
-  ctx.globalAlpha=1;
-
-  drawAthlete(px, py, G.angle, col, G.performing, 1.0);
-}
-
-function drawAthlete(px, py, angleDeg, color, tuck, alpha) {
-  ctx.save();
-  ctx.globalAlpha=alpha;
-  ctx.translate(px, py);
-  ctx.rotate((angleDeg%360)*Math.PI/180);
-  ctx.shadowColor=color; ctx.shadowBlur=16;
-
-  if (tuck) {
-    /* ── Tuck position ── */
-    ctx.fillStyle=color;
-    ctx.beginPath(); ctx.ellipse(0,2,11,13,0,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(0,-15,7,7,0,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle=color; ctx.lineWidth=3; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(-8,6); ctx.lineTo(-12,15); ctx.lineTo(-6,20); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(8,6);  ctx.lineTo(12,15);  ctx.lineTo(6,20);  ctx.stroke();
-  } else {
-    /* ── Layout / straight ── */
-    /* Head */
-    ctx.fillStyle=color;
-    ctx.beginPath(); ctx.ellipse(0,-27,7,8,0,0,Math.PI*2); ctx.fill();
-    /* Neck */
-    ctx.fillRect(-3,-19,6,6);
-    /* Torso */
-    ctx.beginPath();
-    ctx.moveTo(-7,-13); ctx.lineTo(-5,8); ctx.lineTo(5,8); ctx.lineTo(7,-13); ctx.closePath(); ctx.fill();
-    /* Arms streamlined */
-    ctx.strokeStyle=color; ctx.lineWidth=3.5; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(-6,-11); ctx.quadraticCurveTo(-15,-5,-13,4); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(6,-11);  ctx.quadraticCurveTo(15,-5,13,4);   ctx.stroke();
-    /* Hands */
-    ctx.fillStyle=color;
-    ctx.beginPath(); ctx.arc(-13,4,3.5,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(13,4,3.5,0,Math.PI*2);  ctx.fill();
-    /* Hips */
-    ctx.beginPath(); ctx.ellipse(0,10,6,3,0,0,Math.PI*2); ctx.fill();
-    /* Legs */
-    ctx.strokeStyle=color; ctx.lineWidth=4.5;
-    ctx.beginPath(); ctx.moveTo(-3,12); ctx.lineTo(-3,30); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(3,12);  ctx.lineTo(3,30);  ctx.stroke();
-    /* Feet pointed */
-    ctx.lineWidth=3.5;
-    ctx.beginPath(); ctx.moveTo(-3,30); ctx.lineTo(-6,37); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(3,30);  ctx.lineTo(6,37);  ctx.stroke();
-    /* Highlight */
-    ctx.strokeStyle='rgba(255,255,255,0.22)'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(-2,-10); ctx.lineTo(-2,7); ctx.stroke();
-  }
-
-  ctx.shadowBlur=0;
-  ctx.restore();
-}
-
-/* ── Main loop ── */
+// ── Main loop ─────────────────────────────────
 let _last=0;
 function loop(ts){
-  const dt=Math.min((ts-_last)/1000,0.05); _last=ts;
-  update(dt);
-  ctx.clearRect(0,0,W,H);
-  drawBg(); drawBed();
-  if (G.phase!==Phase.TITLE) drawPlayer();
+  const dt=Math.min((ts-_last)/1000,0.05);_last=ts;
+  if(G) update(dt);
+  draw();
+  updateScore();
   requestAnimationFrame(loop);
 }
 
-startNewGame();
-G.phase=Phase.TITLE;
+// Init
+G={phase:P.TITLE,ptStart:null,pts:[],sDiff:0,sH:0,sTiming:0,done:[],skillIdx:0,
+   t:0,spinning:false,spinAngle:0,spinRate:0,spinTimer:0,tapAccum:0,tapFlushTid:null};
 requestAnimationFrame(ts=>{_last=ts;requestAnimationFrame(loop);});
