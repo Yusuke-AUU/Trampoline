@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>TRAMPOLINE — 競技トランポリンゲーム</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<!-- HUD -->
+<div id="hud">
+  <div id="hud-left">
+    <div class="hud-label">HEIGHT</div>
+    <div id="height-val" class="hud-value">0.0<span class="hud-unit">m</span></div>
+  </div>
+  <div id="hud-center">
+    <div id="skill-dots"></div>
+    <div id="phase-text">TAP TO START</div>
+  </div>
+  <div id="hud-right">
+    <div class="hud-label">SCORE</div>
+    <div id="score-val" class="hud-value">0.0</div>
+  </div>
+</div>
+
+<!-- Command input display -->
+<div id="cmd-panel">
+  <div id="cmd-label">NEXT SKILL</div>
+  <div id="cmd-display">—</div>
+  <div id="cmd-hint"></div>
+</div>
+
+<!-- Tap timing flash -->
+<div id="tap-ring"></div>
+
+<!-- Message overlay -->
+<div id="msg-overlay">
+  <div id="msg-text"></div>
+</div>
+
+<!-- Title screen -->
+<div id="title-screen">
+  <div id="title-logo">
+    <div id="title-main">TRAMPOLINE</div>
+    <div id="title-sub">競技トランポリン</div>
+  </div>
+  <div id="title-instructions">
+    <div class="inst-row"><span class="inst-icon">●</span> ベッドの底でタップ → 高さアップ</div>
+    <div class="inst-row"><span class="inst-icon">○</span> 円スワイプ → 抱え込み / 捻り×1</div>
+    <div class="inst-row"><span class="inst-icon">&lt;</span> V字スワイプ → 屈伸姿勢</div>
+    <div class="inst-row"><span class="inst-icon">/</span> 斜めスワイプ → 伸身 / 捻り×0.5</div>
+    <div class="inst-row"><span class="inst-icon">N×</span> タップN回 → 宙返りN回</div>
+  </div>
+  <div id="title-example">
+    例: ○ → タップ×2 → ○ → ○/ = 抱え込み3宙2.5捻り
+  </div>
+  <button id="start-btn">START GAME</button>
+</div>
+
+<!-- Result screen -->
+<div id="result-screen" class="hidden">
+  <div id="result-title">FINAL SCORE</div>
+  <div id="result-scores">
+    <div class="score-row"><span>難度点 D-score</span><span id="res-diff">0.0</span></div>
+    <div class="score-row"><span>高さボーナス</span><span id="res-height">0.0</span></div>
+    <div class="score-row"><span>タイミング</span><span id="res-timing">0.0</span></div>
+    <div class="score-divider"></div>
+    <div class="score-row total"><span>TOTAL</span><span id="res-total">0.0</span></div>
+  </div>
+  <div id="result-skills">
+    <div class="skill-list-title">演技内容</div>
+    <div id="skill-list"></div>
+  </div>
+  <button id="retry-btn">もう一度</button>
+</div>
+
+<script src="game.js"></script>
+</body>
+</html>
