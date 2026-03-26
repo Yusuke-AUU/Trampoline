@@ -241,17 +241,21 @@ function draw() {
 
   if (G.phase===Ph.PLAY) {
     const frac = playerFrac();
-    const py   = bedY - frac*(bedY-peakY);
-    const px   = W*0.5;
+    // bedYからpeakYへ（画面上方向 = Y減少）
+    const py = bedY - frac*(bedY-peakY);
+    const px = W*0.5;
 
-    // ジャンプ軌跡（薄いドット）
-    cx.fillStyle='rgba(0,229,255,0.08)';
-    for(let i=0;i<8;i++){
+    // ジャンプ軌跡
+    cx.fillStyle='rgba(0,229,255,0.07)';
+    for(let i=1;i<8;i++){
       const tf=i/8, yy=bedY-Math.sin(tf*Math.PI)*(bedY-peakY);
-      cx.beginPath();cx.arc(px,yy,2,0,Math.PI*2);cx.fill();
+      cx.beginPath();cx.arc(px,yy,1.8,0,Math.PI*2);cx.fill();
     }
 
-    drawAthlete(px, py, G.spinAngle, G.spinning ? G.posAnim : 'straight');
+    // キャラ描画: 宙返り中はスピン角度を使う、静止時は0
+    const angle = G.spinning ? G.spinAngle : 0;
+    const pose  = G.spinning ? G.posAnim  : 'straight';
+    drawAthlete(px, py, angle, pose);
   }
 }
 
@@ -270,117 +274,83 @@ function drawBed(by) {
   cx.beginPath();cx.moveTo(bx,by);cx.lineTo(bx+bw,by);cx.stroke();
 }
 
-// ─── キャラクター描画（画像参照版）───────────
+// ─── キャラクター描画（手書き棒人間に忠実）───────────
 function drawAthlete(px, py, angleDeg, posture) {
   cx.save();
   cx.translate(px, py);
-  cx.rotate((angleDeg%360)*Math.PI/180);
-
-  const fwd = isFwd(G.skillIdx>0?G.skillIdx-1:0);
+  cx.rotate((angleDeg % 360) * Math.PI / 180);
+  const fwd = isFwd(G.skillIdx > 0 ? G.skillIdx - 1 : 0);
   const col = fwd ? '#00e5ff' : '#ff6b35';
-  cx.shadowColor=col; cx.shadowBlur=14;
-  cx.strokeStyle=col; cx.fillStyle=col; cx.lineCap='round'; cx.lineJoin='round';
-
-  const S = Math.min(W,H)/18; // スケール係数
-
-  switch(posture) {
-    case 'straight': drawStraight(S, col); break;
-    case 'tuck':     drawTuck(S, col); break;
-    case 'pike':     drawPike(S, col); break;
-    case 'layout':   drawLayoutPos(S, col); break;
-    default:         drawStraight(S, col);
+  cx.shadowColor = col; cx.shadowBlur = 12;
+  cx.strokeStyle = col; cx.fillStyle = col;
+  cx.lineCap = 'round'; cx.lineJoin = 'round';
+  const S = Math.min(W, H) * 0.044;
+  switch (posture) {
+    case 'tuck':   pTuck(S, col);   break;
+    case 'pike':   pPike(S, col);   break;
+    case 'layout': pLayout(S, col); break;
+    default:       pStraight(S, col);
   }
-
-  cx.shadowBlur=0;
+  cx.shadowBlur = 0;
   cx.restore();
 }
 
-// ジャンプ（まっすぐ）: 腕を上に、脚まっすぐ
-function drawStraight(S, col) {
-  cx.fillStyle=col; cx.strokeStyle=col;
-  // 頭
-  cx.beginPath(); cx.arc(0,-3.2*S, 0.7*S,0,Math.PI*2); cx.fill();
-  // 体
-  cx.lineWidth=S*0.4;
-  cx.beginPath(); cx.moveTo(0,-2.5*S); cx.lineTo(0,1.2*S); cx.stroke();
-  // 腕（上向き）
-  cx.lineWidth=S*0.32;
-  cx.beginPath(); cx.moveTo(0,-2.0*S); cx.lineTo(-0.9*S,-3.0*S); cx.stroke();
-  cx.beginPath(); cx.moveTo(0,-2.0*S); cx.lineTo( 0.9*S,-3.0*S); cx.stroke();
-  // 脚
-  cx.lineWidth=S*0.38;
-  cx.beginPath(); cx.moveTo(0,1.2*S); cx.lineTo(-0.45*S,2.8*S); cx.stroke();
-  cx.beginPath(); cx.moveTo(0,1.2*S); cx.lineTo( 0.45*S,2.8*S); cx.stroke();
-  // 足
-  cx.lineWidth=S*0.28;
-  cx.beginPath(); cx.moveTo(-0.45*S,2.8*S); cx.lineTo(-0.7*S,3.3*S); cx.stroke();
-  cx.beginPath(); cx.moveTo( 0.45*S,2.8*S); cx.lineTo( 0.7*S,3.3*S); cx.stroke();
+// ジャンプ姿勢: 腕を上に伸ばしてまっすぐ
+function pStraight(S, col) {
+  cx.lineWidth = S * 0.28;
+  cx.beginPath(); cx.arc(0, -3.6*S, 0.58*S, 0, Math.PI*2); cx.fill();
+  cx.beginPath(); cx.moveTo(0, -3.0*S); cx.lineTo(0, 0.8*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0, -2.2*S); cx.lineTo(-1.0*S, -3.3*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0, -2.2*S); cx.lineTo( 1.0*S, -3.3*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0, 0.8*S); cx.lineTo(-0.5*S, 2.6*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0, 0.8*S); cx.lineTo( 0.5*S, 2.6*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(-0.5*S, 2.6*S); cx.lineTo(-0.8*S, 3.2*S); cx.stroke();
+  cx.beginPath(); cx.moveTo( 0.5*S, 2.6*S); cx.lineTo( 0.8*S, 3.2*S); cx.stroke();
 }
 
-// 抱え込み: 膝を両手で抱えた丸まった形（画像通り）
-function drawTuck(S, col) {
-  cx.fillStyle=col; cx.strokeStyle=col;
-  // 頭（少し前傾）
-  cx.beginPath(); cx.arc(0.3*S,-2.2*S, 0.65*S,0,Math.PI*2); cx.fill();
-  // 体（丸まり）
-  cx.lineWidth=S*0.38;
-  cx.beginPath(); cx.moveTo(0.3*S,-1.55*S); cx.lineTo(0,0); cx.stroke();
-  // 膝（上に引き上げ、前に出た形）
-  cx.lineWidth=S*0.35;
-  cx.beginPath(); cx.moveTo(0,0); cx.lineTo(-0.8*S,0.9*S); cx.lineTo(-0.5*S,2.0*S); cx.stroke();
-  cx.beginPath(); cx.moveTo(0,0); cx.lineTo( 0.8*S,0.9*S); cx.lineTo( 0.5*S,2.0*S); cx.stroke();
-  // 腕（膝を抱える）
-  cx.lineWidth=S*0.28;
-  cx.beginPath(); cx.moveTo(0,-1.0*S); cx.lineTo(-1.0*S,0.5*S); cx.lineTo(-0.5*S,1.5*S); cx.stroke();
-  cx.beginPath(); cx.moveTo(0,-1.0*S); cx.lineTo( 1.0*S,0.5*S); cx.lineTo( 0.5*S,1.5*S); cx.stroke();
+// 抱え込み: 膝を両手で胸に引き寄せた丸い形
+function pTuck(S, col) {
+  cx.lineWidth = S * 0.28;
+  cx.beginPath(); cx.arc(0.2*S, -2.6*S, 0.58*S, 0, Math.PI*2); cx.fill();
+  cx.beginPath(); cx.moveTo(0.2*S, -2.0*S); cx.lineTo(0, -0.4*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0, -0.4*S); cx.lineTo(-0.9*S, 0.7*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0, -0.4*S); cx.lineTo( 0.9*S, 0.7*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(-0.9*S, 0.7*S); cx.lineTo(-0.2*S, 1.6*S); cx.stroke();
+  cx.beginPath(); cx.moveTo( 0.9*S, 0.7*S); cx.lineTo( 0.2*S, 1.6*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0, -1.4*S); cx.lineTo(-1.1*S, 0.1*S); cx.lineTo(-0.3*S, 1.1*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0, -1.4*S); cx.lineTo( 1.1*S, 0.1*S); cx.lineTo( 0.3*S, 1.1*S); cx.stroke();
 }
 
-// 屈伸: V字型、腰から折れて脚が上（画像通り）
-function drawPike(S, col) {
-  cx.fillStyle=col; cx.strokeStyle=col;
-  // 頭（上）
-  cx.beginPath(); cx.arc(0,-0.5*S, 0.65*S,0,Math.PI*2); cx.fill();
-  // 上半身（下向き）
-  cx.lineWidth=S*0.38;
-  cx.beginPath(); cx.moveTo(0,0.2*S); cx.lineTo(0,1.8*S); cx.stroke();
-  // 腕（斜め下・脚の方向）
-  cx.lineWidth=S*0.28;
-  cx.beginPath(); cx.moveTo(0,0.8*S); cx.lineTo(-1.1*S,2.2*S); cx.stroke();
-  cx.beginPath(); cx.moveTo(0,0.8*S); cx.lineTo( 1.1*S,2.2*S); cx.stroke();
-  // 腰（折れ点）
-  cx.lineWidth=S*0.42;
-  cx.beginPath(); cx.moveTo(0,1.8*S); cx.lineTo(-0.9*S,0.4*S); cx.stroke();
-  cx.beginPath(); cx.moveTo(0,1.8*S); cx.lineTo( 0.9*S,0.4*S); cx.stroke();
-  // 足先（上）
-  cx.lineWidth=S*0.28;
-  cx.beginPath(); cx.moveTo(-0.9*S,0.4*S); cx.lineTo(-1.1*S,-0.3*S); cx.stroke();
-  cx.beginPath(); cx.moveTo( 0.9*S,0.4*S); cx.lineTo( 1.1*S,-0.3*S); cx.stroke();
+// 屈伸: 腰で折れてV字、脚はまっすぐ上向き
+function pPike(S, col) {
+  cx.lineWidth = S * 0.28;
+  cx.beginPath(); cx.arc(0.1*S, -0.8*S, 0.58*S, 0, Math.PI*2); cx.fill();
+  cx.beginPath(); cx.moveTo(0.1*S, -0.2*S); cx.lineTo(0.4*S, 1.5*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0.1*S, 0.6*S); cx.lineTo(-1.2*S, -0.6*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0.1*S, 0.6*S); cx.lineTo( 1.3*S, -0.5*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0.4*S, 1.5*S); cx.lineTo(-1.0*S, 0.0*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0.4*S, 1.5*S); cx.lineTo( 1.6*S, 0.1*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(-1.0*S, 0.0*S); cx.lineTo(-1.4*S, -0.6*S); cx.stroke();
+  cx.beginPath(); cx.moveTo( 1.6*S, 0.1*S); cx.lineTo( 2.0*S, -0.4*S); cx.stroke();
 }
 
-// 伸身: 体を少し反らせた形（画像通り）
-function drawLayoutPos(S, col) {
-  cx.fillStyle=col; cx.strokeStyle=col;
-  // 頭
-  cx.beginPath(); cx.arc(0,-3.0*S, 0.65*S,0,Math.PI*2); cx.fill();
-  // 体（わずかに反り）
-  cx.lineWidth=S*0.38;
+// 伸身: 体を少し反らせた流れるような形
+function pLayout(S, col) {
+  cx.lineWidth = S * 0.28;
+  cx.beginPath(); cx.arc(0.3*S, -3.0*S, 0.58*S, 0, Math.PI*2); cx.fill();
   cx.beginPath();
-  cx.moveTo(0,-2.35*S);
-  cx.quadraticCurveTo(0.6*S,-0.8*S, 0.3*S,1.0*S);
+  cx.moveTo(0.3*S, -2.4*S);
+  cx.quadraticCurveTo(0.9*S, -0.8*S, 0.5*S, 0.9*S);
   cx.stroke();
-  // 腕（後ろ下がり）
-  cx.lineWidth=S*0.28;
-  cx.beginPath(); cx.moveTo(0,-2.0*S); cx.lineTo(-0.7*S,-1.0*S); cx.stroke();
-  cx.beginPath(); cx.moveTo(0,-2.0*S); cx.lineTo( 0.7*S,-1.0*S); cx.stroke();
-  // 脚（少し後ろ）
-  cx.lineWidth=S*0.36;
-  cx.beginPath(); cx.moveTo(0.3*S,1.0*S); cx.lineTo(-0.1*S,2.8*S); cx.stroke();
-  cx.beginPath(); cx.moveTo(0.3*S,1.0*S); cx.lineTo( 0.6*S,2.8*S); cx.stroke();
-  // 足
-  cx.lineWidth=S*0.26;
-  cx.beginPath(); cx.moveTo(-0.1*S,2.8*S); cx.lineTo(-0.3*S,3.3*S); cx.stroke();
-  cx.beginPath(); cx.moveTo( 0.6*S,2.8*S); cx.lineTo( 0.8*S,3.3*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0.3*S, -1.8*S); cx.lineTo(-0.7*S, -0.9*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0.3*S, -1.8*S); cx.lineTo( 1.3*S, -0.9*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0.5*S, 0.9*S); cx.lineTo(-0.1*S, 2.7*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(0.5*S, 0.9*S); cx.lineTo( 1.0*S, 2.7*S); cx.stroke();
+  cx.beginPath(); cx.moveTo(-0.1*S, 2.7*S); cx.lineTo(-0.4*S, 3.2*S); cx.stroke();
+  cx.beginPath(); cx.moveTo( 1.0*S, 2.7*S); cx.lineTo( 1.3*S, 3.2*S); cx.stroke();
 }
+
+
 
 // ── UI ─────────────────────────────────────
 function setPhase(t){ document.getElementById('phase-txt').textContent=t; }
